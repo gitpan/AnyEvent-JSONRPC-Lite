@@ -21,7 +21,8 @@ no_index:
     - t
     - xt
 requires:
+  Any::Moose: 0
   AnyEvent: 4.80
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.01
+version: 0.01001
