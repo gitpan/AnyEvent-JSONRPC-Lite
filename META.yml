@@ -26,4 +26,4 @@ requires:
   JSON: 0
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.03002
+version: 0.10
