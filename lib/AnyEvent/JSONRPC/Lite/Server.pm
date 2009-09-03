@@ -129,10 +129,7 @@ sub _dispatch {
         weaken $handle;
 
         my $cv = AnyEvent::JSONRPC::Lite::CondVar->new;
-        $cv->_cb(
-            sub { $res_cb->( result => $_[0]->recv ) },
-            sub { $res_cb->( error  => $_[0]->recv ) },
-        );
+        $cv->_cb(sub { $res_cb->( $_[0]->recv ) });
 
         $target ||= sub { shift->error(qq/No such method "$request->{method}" found/) };
         $target->( $cv, @{ $request->{params} || [] } );
@@ -234,7 +231,7 @@ JSONRPC callback arguments consists of C<$result_cv>, and request C<@params>.
     my ($result_cv, @params) = @_;
 
 C<$result_cv> is L<AnyEvent::JSONRPC::Lite::CondVar> object.
-Callback must be call C<<$result_cv->result>> to return result or C<<$result_cv->error>> to return error.
+Callback must be call C<< $result_cv->result >> to return result or C<< $result_cv->error >> to return error.
 
 If C<$result_cv> is not defined, it is notify request, so you don't have to return response. See L<AnyEvent::JSONRPC::Lite::Client> notify method.
 
