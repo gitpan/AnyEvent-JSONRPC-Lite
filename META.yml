@@ -4,12 +4,10 @@ author:
   - 'Daisuke Murase <typester@cpan.org>'
 build_requires:
   ExtUtils::MakeMaker: 6.42
-  Test::More: 0
-  Test::TCP: 0.11
 configure_requires:
   ExtUtils::MakeMaker: 6.42
 distribution_type: module
-generated_by: 'Module::Install version 0.91'
+generated_by: 'Module::Install version 0.97'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -25,8 +23,9 @@ recommends:
 requires:
   Any::Moose: 0
   AnyEvent: 5.12
+  Filter::Util::Call: 0
   JSON: 0
 resources:
   license: http://dev.perl.org/licenses/
   repository: git://github.com/typester/anyevent-jsonrpc-lite-perl.git
-version: 0.11002
+version: 0.12

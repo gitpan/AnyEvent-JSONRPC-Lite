@@ -8,7 +8,7 @@ requires 'JSON';
 recommends 'JSON::XS';
 
 test_requires 'Test::More';
-test_requires 'Test::TCP' => '0.11';
+test_requires 'Test::TCP';
 
 author_tests('xt');
 use_test_base;
