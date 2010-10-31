@@ -3,7 +3,7 @@ package Test::TCP;
 use strict;
 use warnings;
 use 5.00800;
-our $VERSION = '0.16';
+our $VERSION = '1.04';
 use base qw/Exporter/;
 use IO::Socket::INET;
 use Test::SharedFork;
@@ -18,10 +18,18 @@ my $TERMSIG = $^O eq 'MSWin32' ? 'KILL' : 'TERM';
 our @EXPORT = qw/ empty_port test_tcp wait_port /;
 
 sub empty_port {
-    my $port = shift || 10000;
-    $port = 19000 unless $port =~ /^[0-9]+$/ && $port < 19000;
+    my $port = do {
+        if (@_) {
+            my $p = $_[0];
+            $p = 19000 unless $p =~ /^[0-9]+$/ && $p < 19000;
+            $p;
+        } else {
+            10000 + int(rand()*1000);
+        }
+    };
 
     while ( $port++ < 20000 ) {
+        next if _check_port($port);
         my $sock = IO::Socket::INET->new(
             Listen    => 5,
             LocalAddr => '127.0.0.1',
@@ -45,19 +53,11 @@ sub test_tcp {
         # parent.
         wait_port($port);
 
-        my $sig;
-        my $err;
-        {
-            local $SIG{INT}  = sub { $sig = "INT"; die "SIGINT received\n" };
-            local $SIG{PIPE} = sub { $sig = "PIPE"; die "SIGPIPE received\n" };
-            eval {
-                $args{client}->($port, $pid);
-            };
-            $err = $@;
-
+        my $guard = Test::TCP::Guard->new(code => sub {
             # cleanup
             kill $TERMSIG => $pid;
-            while (1) {
+            local $?; # waitpid modifies original $?.
+            LOOP: while (1) {
                 my $kid = waitpid( $pid, 0 );
                 if ($^O ne 'MSWin32') { # i'm not in hell
                     if (WIFSIGNALED($?)) {
@@ -68,17 +68,12 @@ sub test_tcp {
                     }
                 }
                 if ($kid == 0 || $kid == -1) {
-                    last;
+                    last LOOP;
                 }
             }
-        }
+        });
 
-        if ($sig) {
-            kill $sig, $$; # rethrow signal after cleanup
-        }
-        if ($err) {
-            die $err; # rethrow exception after cleanup.
-        }
+        $args{client}->($port, $pid);
     }
     elsif ( $pid == 0 ) {
         # child
@@ -118,9 +113,23 @@ sub wait_port {
     die "cannot open port: $port";
 }
 
+{
+    package # hide from pause
+        Test::TCP::Guard;
+    sub new {
+        my ($class, %args) = @_;
+        bless { %args }, $class;
+    }
+    sub DESTROY {
+        my ($self) = @_;
+        local $@;
+        $self->{code}->();
+    }
+}
+
 1;
 __END__
 
 =encoding utf8
 
-#line 241
+#line 252
