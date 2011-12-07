@@ -3,32 +3,35 @@ package Test::TCP;
 use strict;
 use warnings;
 use 5.00800;
-our $VERSION = '1.04';
+our $VERSION = '1.13';
 use base qw/Exporter/;
 use IO::Socket::INET;
-use Test::SharedFork;
+use Test::SharedFork 0.12;
 use Test::More ();
 use Config;
 use POSIX;
 use Time::HiRes ();
+use Carp ();
+
+our @EXPORT = qw/ empty_port test_tcp wait_port /;
 
 # process does not die when received SIGTERM, on win32.
 my $TERMSIG = $^O eq 'MSWin32' ? 'KILL' : 'TERM';
 
-our @EXPORT = qw/ empty_port test_tcp wait_port /;
-
+# get a empty port on 49152 .. 65535
+# http://www.iana.org/assignments/port-numbers
 sub empty_port {
     my $port = do {
         if (@_) {
             my $p = $_[0];
-            $p = 19000 unless $p =~ /^[0-9]+$/ && $p < 19000;
+            $p = 49152 unless $p =~ /^[0-9]+$/ && $p < 49152;
             $p;
         } else {
-            10000 + int(rand()*1000);
+            50000 + int(rand()*1000);
         }
     };
 
-    while ( $port++ < 20000 ) {
+    while ( $port++ < 60000 ) {
         next if _check_port($port);
         my $sock = IO::Socket::INET->new(
             Listen    => 5,
@@ -47,42 +50,12 @@ sub test_tcp {
     for my $k (qw/client server/) {
         die "missing madatory parameter $k" unless exists $args{$k};
     }
-    my $port = $args{port} || empty_port();
-
-    if ( my $pid = Test::SharedFork->fork() ) {
-        # parent.
-        wait_port($port);
-
-        my $guard = Test::TCP::Guard->new(code => sub {
-            # cleanup
-            kill $TERMSIG => $pid;
-            local $?; # waitpid modifies original $?.
-            LOOP: while (1) {
-                my $kid = waitpid( $pid, 0 );
-                if ($^O ne 'MSWin32') { # i'm not in hell
-                    if (WIFSIGNALED($?)) {
-                        my $signame = (split(' ', $Config{sig_name}))[WTERMSIG($?)];
-                        if ($signame =~ /^(ABRT|PIPE)$/) {
-                            Test::More::diag("your server received SIG$signame");
-                        }
-                    }
-                }
-                if ($kid == 0 || $kid == -1) {
-                    last LOOP;
-                }
-            }
-        });
-
-        $args{client}->($port, $pid);
-    }
-    elsif ( $pid == 0 ) {
-        # child
-        $args{server}->($port);
-        exit;
-    }
-    else {
-        die "fork failed: $!";
-    }
+    my $server = Test::TCP->new(
+        code => $args{server},
+        port => $args{port} || empty_port(),
+    );
+    $args{client}->($server->port, $server->pid);
+    undef $server; # make sure
 }
 
 sub _check_port {
@@ -113,18 +86,91 @@ sub wait_port {
     die "cannot open port: $port";
 }
 
-{
-    package # hide from pause
-        Test::TCP::Guard;
-    sub new {
-        my ($class, %args) = @_;
-        bless { %args }, $class;
+# ------------------------------------------------------------------------- 
+# OO-ish interface
+
+sub new {
+    my $class = shift;
+    my %args = @_==1 ? %{$_[0]} : @_;
+    Carp::croak("missing mandatory parameter 'code'") unless exists $args{code};
+    my $self = bless {
+        auto_start => 1,
+        _my_pid    => $$,
+        %args,
+    }, $class;
+    $self->{port} = Test::TCP::empty_port() unless exists $self->{port};
+    $self->start()
+      if $self->{auto_start};
+    return $self;
+}
+
+sub pid  { $_[0]->{pid} }
+sub port { $_[0]->{port} }
+
+sub start {
+    my $self = shift;
+    if ( my $pid = fork() ) {
+        # parent.
+        $self->{pid} = $pid;
+        Test::TCP::wait_port($self->port);
+        return;
+    } elsif ($pid == 0) {
+        # child process
+        $self->{code}->($self->port);
+        # should not reach here
+        if (kill 0, $self->{_my_pid}) { # warn only parent process still exists
+            warn("[Test::TCP] Child process does not block(PID: $$, PPID: $self->{_my_pid})");
+        }
+        exit 0;
+    } else {
+        die "fork failed: $!";
     }
-    sub DESTROY {
-        my ($self) = @_;
-        local $@;
-        $self->{code}->();
+}
+
+sub stop {
+    my $self = shift;
+
+    return unless defined $self->{pid};
+    return unless $self->{_my_pid} == $$;
+
+    # This is a workaround for win32 fork emulation's bug.
+    #
+    # kill is inherently unsafe for pseudo-processes in Windows
+    # and the process calling kill(9, $pid) may be destabilized
+    # The call to Sleep will decrease the frequency of this problems
+    #
+    # SEE ALSO:
+    #   http://www.gossamer-threads.com/lists/perl/porters/261805
+    #   https://rt.cpan.org/Ticket/Display.html?id=67292
+    Win32::Sleep(0) if $^O eq "MSWin32"; # will relinquish the remainder of its time slice
+
+        kill $TERMSIG => $self->{pid};
+
+    Win32::Sleep(0) if $^O eq "MSWin32"; # will relinquish the remainder of its time slice
+
+
+    local $?; # waitpid modifies original $?.
+    LOOP: while (1) {
+        my $kid = waitpid( $self->{pid}, 0 );
+        if ($^O ne 'MSWin32') { # i'm not in hell
+            if (POSIX::WIFSIGNALED($?)) {
+                my $signame = (split(' ', $Config{sig_name}))[POSIX::WTERMSIG($?)];
+                if ($signame =~ /^(ABRT|PIPE)$/) {
+                    Test::More::diag("your server received SIG$signame");
+                }
+            }
+        }
+        if ($kid == 0 || $kid == -1) {
+            last LOOP;
+        }
     }
+    undef $self->{pid};
+}
+
+sub DESTROY {
+    my $self = shift;
+    local $@;
+    $self->stop();
 }
 
 1;
@@ -132,4 +178,4 @@ __END__
 
 =encoding utf8
 
-#line 252
+#line 406
