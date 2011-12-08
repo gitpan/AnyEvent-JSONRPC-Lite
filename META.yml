@@ -28,4 +28,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: git://github.com/typester/anyevent-jsonrpc-lite-perl.git
-version: 0.14
+version: 0.15
